@@ -337,7 +337,7 @@ def draw_detections(image: Image.Image, boxes, classes, confs, names,
 
 
 def run_inference(model, image: Image.Image, conf: float, iou: float,
-                  max_det: int) -> dict:
+                  max_det: int, imgsz: int = 640) -> dict:
     """Run YOLO inference and return structured results."""
     # Convert PIL to numpy for ultralytics
     img_array = np.array(image)
@@ -346,7 +346,7 @@ def run_inference(model, image: Image.Image, conf: float, iou: float,
         source=img_array,
         conf=conf,
         iou=iou,
-        imgsz=640,
+        imgsz=imgsz,
         max_det=max_det,
         device="cpu",
         save=False,
@@ -484,46 +484,67 @@ with st.sidebar:
     st.markdown("## ⚙️ Detection Settings")
     st.markdown("---")
 
-    conf_threshold = st.slider(
-        "Confidence threshold",
-        min_value=0.05,
-        max_value=0.95,
-        value=0.25,
-        step=0.05,
-        help="Minimum confidence score to keep a detection. Recommended: 0.20–0.35."
-    )
+    with st.expander("🔬 Advanced Inference", expanded=True):
+        conf_threshold = st.slider(
+            "Confidence threshold",
+            min_value=0.05,
+            max_value=0.95,
+            value=0.25,
+            step=0.05,
+            help="Minimum confidence score to keep a detection. Recommended: 0.20–0.35."
+        )
 
-    iou_threshold = st.slider(
-        "IoU threshold (NMS)",
-        min_value=0.1,
-        max_value=0.95,
-        value=0.7,
-        step=0.05,
-        help="Intersection-over-Union threshold for NMS. Higher = more overlapping boxes."
-    )
+        iou_threshold = st.slider(
+            "IoU (NMS)",
+            min_value=0.1,
+            max_value=0.95,
+            value=0.7,
+            step=0.05,
+            help="IoU threshold for Non-Maximum Suppression. Higher = more overlapping boxes allowed."
+        )
 
-    max_det = st.slider(
-        "Max detections",
-        min_value=50,
-        max_value=1000,
-        value=300,
-        step=50,
-    )
+        imgsz_val = st.select_slider(
+            "Inference resolution",
+            options=[320, 416, 512, 640, 800, 1024],
+            value=640,
+            help="Higher resolution improves detection of small cells (Platelets) but increases processing time."
+        )
+
+        max_det_val = st.slider(
+            "Max detections",
+            min_value=50,
+            max_value=1000,
+            value=300,
+            step=50,
+        )
 
     st.markdown("---")
     st.markdown("## 🎨 Display Options")
+    
+    with st.expander("Visual Settings", expanded=False):
+        show_labels = st.checkbox("Show labels", value=True)
+        show_conf = st.checkbox("Show confidence", value=True)
+        line_width = st.slider("Box thickness", 1, 5, 2)
 
-    show_labels = st.checkbox("Show labels", value=True)
-    show_conf = st.checkbox("Show confidence", value=True)
-    line_width = st.slider("Box line width", 1, 5, 2)
+    st.markdown("---")
+    st.markdown("## 📝 Report Metadata")
+    
+    with st.expander("Lab Info", expanded=False):
+        patient_id = st.text_input("Patient ID / Reference", placeholder="e.g. PAT-2026-001")
+        lab_notes = st.text_area("Analysis Notes", placeholder="Enter clinical observations...")
+
+    st.markdown("---")
+    if st.button("🔄 Reset App", use_container_width=True):
+        for key in st.session_state.keys():
+            del st.session_state[key]
+        st.rerun()
 
     st.markdown("---")
     st.markdown("## ℹ️ About Model")
     st.info(
-        """
+        f"""
         **Architecture:** YOLO26-m  
-        **Training Data:** TXL-PBC + Raabin-WBC  
-        **Input Size:** 640×640 px  
+        **Input Size:** {imgsz_val}x{imgsz_val} px  
         **mAP@50:** 0.875  
         """
     )
@@ -610,7 +631,7 @@ if image_to_process is not None:
     # Run inference
     with st.spinner("⚡ Processing Neural Pipeline..."):
         results = run_inference(model, image_to_process, conf_threshold,
-                                iou_threshold, max_det)
+                                iou_threshold, max_det_val, imgsz_val)
 
     # Draw annotations
     annotated_img = draw_detections(
@@ -694,10 +715,20 @@ if image_to_process is not None:
         
         # Download Report CSV
         import pandas as pd
-        report_df = pd.DataFrame([
+        report_data = [
             {"Cell Type": k, "Count": v, "Percentage": f"{(v/results['total']*100):.1f}%"}
             for k, v in results["counts"].items()
-        ])
+        ]
+        # Add metadata to CSV if provided
+        if patient_id or lab_notes:
+            report_data.append({}) # empty row
+            report_data.append({"Cell Type": "METADATA", "Count": "", "Percentage": ""})
+            if patient_id:
+                report_data.append({"Cell Type": "Patient ID", "Count": patient_id, "Percentage": ""})
+            if lab_notes:
+                report_data.append({"Cell Type": "Notes", "Count": lab_notes, "Percentage": ""})
+                
+        report_df = pd.DataFrame(report_data)
         csv = report_df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="📊 Download CSV Report",
